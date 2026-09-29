@@ -1,17 +1,32 @@
-# Battle.net game launcher for Linux
+# bnet-launch
 
-Launch a Battle.net game directly from Linux while keeping Battle.net's normal SSO flow.
+Small wrapper around Battle.net's existing `--exec` launch command for Linux/Wine.
 
-Primarily intended for launchers and game-streaming setups such as Sunshine/Moonlight,
-where the game should be launchable directly without automating the Battle.net UI.
+This repository exists for the cold-start case, mainly so a Battle.net game can be exposed as normal applications in Sunshine/Moonlight without automating the launcher UI or bypassing the Battle.net authentication.
 
-Requires Bash and a working Battle.net installation under Wine or a compatible runner.
+## Usage
+
+Make it executable:
+
+```bash
+chmod +x bnet-launch.sh
+```
+
+Launch any Battle.net game via:
+
+```bash
+WINEPREFIX="$HOME/Games/battlenet" ./bnet-launch.sh {product-code}
+```
+
+Show help:
+
+```bash
+./bnet-launch.sh --help
+```
 
 ## Product codes
 
-`bnet-launch` accepts a Battle.net product code as its first argument.
-
-Currently documented codes include:
+The first argument is passed to Battle.net as the product code.
 
 ```text
 WoW   World of Warcraft
@@ -19,54 +34,81 @@ WoWC  World of Warcraft Classic
 WoWF  World of Warcraft: Forever beta
 ```
 
-`WoWF` is currently associated with the Forever beta and may change when Forever releases.
-
-For other games and current product codes, see the community-maintained list:
+A larger list of Battle.net product codes is available here:
 
 https://steamcommunity.com/sharedfiles/filedetails/?id=1113049716
 
-## Plain Wine
+## What the script checks
 
-```bash
-chmod +x bnet-launch.sh
-WINEPREFIX=/path/to/battlenet-prefix ./bnet-launch.sh WoW
-```
-
-`WoW` is the default, so this also works:
-
-```bash
-WINEPREFIX=/path/to/battlenet-prefix ./bnet-launch.sh
-```
-
-Current WoW Forever beta:
-
-```bash
-WINEPREFIX=/path/to/battlenet-prefix ./bnet-launch.sh WoWF
-```
-
-## How it works
-
-The script first sends:
+The script launches Battle.net with:
 
 ```text
 Battle.net.exe "--exec=launch <PRODUCT>"
 ```
 
-If Battle.net is already running, the request is forwarded to the existing instance through Battle.net's IPC mechanism and the game launches normally.
+and watches the Battle.net logs to determine whether that process became an IPC client or the main Battle.net process.
 
-On a cold start, the first process can become the primary Battle.net instance instead. The script waits for Battle.net to log in and initialize `GameController`, then sends the launch command again.
+If it sees:
 
-## Custom runners (Lutris, Bottles, Proton, UMU, etc.)
+```text
+IPC ShMem mode=client
+```
 
-Set `BNET_RUNNER` to a runner command or executable wrapper that can run `Battle.net.exe` inside the correct environment.
+Battle.net was already running. The launch request has been forwarded to the existing instance and there is nothing else to do.
 
-The runner is called as:
+If it sees:
+
+```text
+IPC ShMem mode=server
+```
+
+this is a cold start. The script waits for Battle.net to report:
+
+```text
+Logged into Battle.net successfully.
+GameController initialization complete
+```
+
+It also checks for:
+
+```text
+GameLaunching=1
+```
+
+in case the original request already started the game.
+
+If the game has not started by the time Battle.net is ready, the script sends the `--exec` request again. The second invocation then connects to the running Battle.net instance as an IPC client.
+
+Only log output written after the current launch attempt is considered.
+
+## Sunshine / Moonlight
+
+This is the reason I wrote the script.
+
+Instead of exposing Battle.net itself in Sunshine, I can expose WoW as an application and use this as the launch command:
+
+```bash
+WINEPREFIX="$HOME/Games/battlenet" \
+/path/to/bnet-launch.sh WoW
+```
+
+Battle.net still handles authentication, updates, and launching the game. Sunshine just gets a command it can treat like any other application.
+
+The same approach can also be used from Steam shortcuts, desktop entries, or shell scripts.
+
+## Custom runners
+
+Plain Wine works directly.
+
+If your Battle.net installation is managed by something else, set `BNET_RUNNER` to a wrapper or command that can launch `Battle.net.exe`.
+
+The runner is called with the executable followed by the Battle.net arguments:
 
 ```text
 $BNET_RUNNER "$BNET_EXE" "--exec=launch WoW"
 ```
 
-Example wrapper:
+For example:
 
 ```bash
 #!/usr/bin/env bash
@@ -76,36 +118,69 @@ exec your-runner-command "$@"
 Then:
 
 ```bash
-BNET_RUNNER=/path/to/your-wrapper \
+BNET_RUNNER=/path/to/runner \
 BNET_LOG_DIR=/path/to/Battle.net/Logs \
 ./bnet-launch.sh WoW
 ```
 
-If the runner uses a different Wine prefix than `WINEPREFIX`, set `BNET_LOG_DIR` explicitly so the script can find Battle.net's logs.
+For custom runners, `BNET_LOG_DIR` may need to be set explicitly so the script can find Battle.net's logs.
 
 ## Configuration
 
-```text
-WINEPREFIX             Wine prefix, defaults to ~/.wine
-WINE_BIN               Wine executable, defaults to wine
-BNET_EXE               Windows path to Battle.net.exe
-BNET_EXE_UNIX          Host path used to verify Battle.net is installed
-BNET_RUNNER            Optional runner command or executable wrapper
-BNET_LOG_DIR           Optional explicit Battle.net log directory
-BNET_LAUNCH_TIMEOUT    Readiness timeout, defaults to 120 seconds
-BNET_CLASSIFY_TIMEOUT  IPC client/server detection timeout, defaults to 15 seconds
+| Variable | Description | Default |
+| --- | --- | --- |
+| `WINEPREFIX` | Wine prefix | `~/.wine` |
+| `WINE_BIN` | Wine executable | `wine` |
+| `BNET_EXE` | Windows path to `Battle.net.exe` | `C:\Program Files (x86)\Battle.net\Battle.net.exe` |
+| `BNET_EXE_UNIX` | Host path used to verify the Battle.net executable | Derived from `WINEPREFIX` |
+| `BNET_RUNNER` | Optional custom runner | unset |
+| `BNET_LOG_DIR` | Battle.net log directory | Auto-detected from the Wine prefix |
+| `BNET_LAUNCH_TIMEOUT` | Time to wait for Battle.net to become ready | `120` seconds |
+| `BNET_CLASSIFY_TIMEOUT` | Time to wait for IPC client/server detection | `15` seconds |
+
+Example:
+
+```bash
+BNET_LAUNCH_TIMEOUT=180 \
+WINEPREFIX="$HOME/Games/battlenet" \
+./bnet-launch.sh WoW
 ```
 
-The readiness check currently watches for:
+## Troubleshooting
 
-```text
-Logged into Battle.net successfully.
-GameController initialization complete
+### Could not determine whether Battle.net became an IPC client or server
+
+The script probably cannot find or read the Battle.net logs.
+
+If you're using a custom runner, set the log directory manually:
+
+```bash
+BNET_LOG_DIR=/path/to/Battle.net/Logs
 ```
 
-and distinguishes cold and warm launches using:
+### Battle.net starts but the script times out
+
+Battle.net may need longer to log in or initialize `GameController`.
+
+Try:
+
+```bash
+BNET_LAUNCH_TIMEOUT=180 ./bnet-launch.sh WoW
+```
+
+Also make sure Battle.net can start and log in normally in the same prefix or runner environment.
+
+### Battle.net executable not found
+
+With plain Wine, the default is:
 
 ```text
-IPC ShMem mode=server
-IPC ShMem mode=client
+C:\Program Files (x86)\Battle.net\Battle.net.exe
+```
+
+Override it if your installation is somewhere else:
+
+```bash
+BNET_EXE='C:\custom\path\Battle.net.exe'
+BNET_EXE_UNIX='/custom/host/path/Battle.net.exe'
 ```
