@@ -1,6 +1,8 @@
 # bnet-launch
 
-Launch Battle.net games through Wine with Battle.net's `--exec` command. The script handles cold starts so a game can be added as a Sunshine/Moonlight application without automating the launcher UI or bypassing Battle.net authentication.
+Launch Battle.net games through Wine from a Sunshine/Moonlight shortcut. On a cold start, `Battle.net.exe --exec=launch WoW` can open Battle.net without starting WoW. This script waits for Battle.net to become ready and sends the launch request again when needed.
+
+WoW still uses Battle.net's normal sign-on flow, so a valid Battle.net session avoids a separate in-game login. The script does not automate the launcher UI or bypass authentication. If Battle.net asks you to sign in again, you must complete that sign-in.
 
 ## Usage
 
@@ -8,7 +10,7 @@ Launch Battle.net games through Wine with Battle.net's `--exec` command. The scr
 WINEPREFIX="$HOME/Games/battlenet" ./bnet-launch.sh WoW
 ```
 
-Use the script's absolute path for a Sunshine launch command. The product code is optional and defaults to `WoW`; run `./bnet-launch.sh --help` for command help.
+The product code is optional and defaults to `WoW`; run `./bnet-launch.sh --help` for command help.
 
 | Code | Game |
 | --- | --- |
@@ -17,6 +19,16 @@ Use the script's absolute path for a Sunshine launch command. The product code i
 | `WoWF` | World of Warcraft: Forever beta |
 
 [More product codes](https://steamcommunity.com/sharedfiles/filedetails/?id=1113049716) are available, and the first argument is passed to Battle.net unchanged.
+
+## Sunshine / Moonlight
+
+On a Linux host, add a World of Warcraft application in Sunshine. Leave **Command** empty and add this entry to **Detached Commands**, replacing both paths with absolute paths on your host:
+
+```text
+env WINEPREFIX=/home/you/Games/battlenet /path/to/bnet-launch.sh WoW
+```
+
+The wrapper exits after sending the launch request. A detached command lets the stream continue; end the stream from Moonlight when you finish playing. The wrapper does not track when WoW exits. If Sunshine runs as a Flatpak, put `flatpak-spawn --host` before `env`. See [Sunshine's application guidance](https://docs.lizardbyte.dev/projects/sunshine/master/md_docs_2getting__started.html) for these command behaviors.
 
 ## How it works
 
