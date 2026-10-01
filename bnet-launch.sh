@@ -118,25 +118,31 @@ find_bnet_logs() {
 
 # Ignore log content written before this launch attempt.
 declare -A LOG_OFFSETS=()
+declare -A LOG_IDS=()
 while IFS= read -r -d '' log; do
-  LOG_OFFSETS["$log"]="$(stat -c '%s' -- "$log" 2>/dev/null || printf '0')"
+  if log_stat="$(stat -c '%d:%i:%s' -- "$log" 2>/dev/null)"; then
+    LOG_IDS["$log"]="${log_stat%:*}"
+    LOG_OFFSETS["$log"]="${log_stat##*:}"
+  fi
 done < <(find_bnet_logs)
 
 fresh_log_contains() {
   local log="$1"
   local pattern="$2"
   local offset="${LOG_OFFSETS[$log]:-0}"
+  local log_stat
   local size
 
   [[ -f "$log" ]] || return 1
-  size="$(stat -c '%s' -- "$log" 2>/dev/null)" || return 1
+  log_stat="$(stat -c '%d:%i:%s' -- "$log" 2>/dev/null)" || return 1
+  size="${log_stat##*:}"
 
-  if ((size < offset)); then
+  if [[ "${LOG_IDS[$log]:-}" != "${log_stat%:*}" ]] || ((size < offset)); then
     offset=0
   fi
 
   ((size > offset)) || return 1
-  grep -Fq -- "$pattern" < <(tail -c "+$((offset + 1))" -- "$log")
+  grep -Fiq -- "$pattern" < <(tail -c "+$((offset + 1))" -- "$log")
 }
 
 find_fresh_mode_log() {
@@ -211,15 +217,23 @@ if [[ "$mode" != "server" ]]; then
   exit 1
 fi
 
-# The primary Battle.net process should outlive this launcher script.
-disown "$request_pid" 2>/dev/null || true
-
 echo "Battle.net became the primary instance; waiting for login and GameController..."
 
 ready=0
+request_exited=0
 deadline=$((SECONDS + TIMEOUT))
 
 while ((SECONDS < deadline)); do
+  if ((request_exited == 0)) && ! kill -0 "$request_pid" 2>/dev/null; then
+    if wait "$request_pid"; then
+      request_exited=1
+    else
+      status=$?
+      echo "Battle.net primary instance exited before readiness with status $status." >&2
+      exit "$status"
+    fi
+  fi
+
   if fresh_log_contains "$mode_log" 'Logged into Battle.net successfully.' &&
     fresh_log_contains "$mode_log" 'GameController initialization complete'; then
     ready=1
@@ -234,7 +248,11 @@ if ((ready == 0)); then
   exit 1
 fi
 
-if fresh_log_contains "$mode_log" 'GameLaunching=1'; then
+# The primary Battle.net process should outlive this launcher script.
+disown "$request_pid" 2>/dev/null || true
+
+# A launch marker for another product does not satisfy this request.
+if fresh_log_contains "$mode_log" "InstallState ($PRODUCT): GameLaunching=1"; then
   echo "Battle.net already started the game."
   exit 0
 fi
