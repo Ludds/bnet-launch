@@ -81,3 +81,7 @@ Set `BNET_LOG_DIR` if the runner uses a different prefix or the script cannot fi
 ## Development
 
 Run `bash tests/launch.sh` to check the log handling with a synthetic runner. It does not start Wine or Battle.net.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
